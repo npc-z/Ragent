@@ -2,6 +2,19 @@ use std::env;
 
 use reqwest::Client;
 
+fn read_user_input() -> Option<String> {
+    let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
+    let readline = rl.readline("ragent> ");
+
+    match readline {
+        Ok(line) => {
+            let line = line.trim().to_string();
+            Some(line)
+        }
+        Err(_) => None,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
@@ -18,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let model = env::var("MODEL").expect("请设置模型名称");
 
-    let user_msg = "Hello!";
+    let user_msg = read_user_input();
 
     // 构造 JSON body（也可以用 serde 序列化结构体）
     let body = serde_json::json!({
