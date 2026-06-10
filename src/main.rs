@@ -34,15 +34,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_msg = read_user_input();
 
     // 构造 JSON body（也可以用 serde 序列化结构体）
+    let system = "You are a coding agent at {os.getcwd()}. Use bash to inspect and change the workspace. Act first, then report clearly";
     let body = serde_json::json!({
         "model": model,
         "messages": [
-          {"role": "system", "content": "You are a helpful assistant."},
+          {"role": "system", "content": system},
           {"role": "user", "content": user_msg}
         ],
         "thinking": {"type": "enabled"},
         "reasoning_effort": "high",
         "stream": false,
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "description": "Run a shell command in the current workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string",},
+                        },
+                        "required": ["command"],
+                    },
+                },
+            },
+        ],
     });
 
     let response = client
