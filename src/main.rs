@@ -1,8 +1,9 @@
-use std::io::Read;
-use std::{env, process::Stdio};
+use std::env;
 
 use ragent::llm::client::ApiClient;
+use ragent::llm::deepseek::enums::finish_reason::FinishReason;
 use ragent::llm::llm_type::LlmType;
+use ragent::llm::response::ApiResponse;
 
 fn read_user_input() -> Option<String> {
     let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
@@ -68,10 +69,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     });
 
-    // // 读取响应文本
+    // 响应
     let response = client.send(&body).await;
-    // println!("{}", response.get_answer());
-    dbg!(response);
+    println!("{}", response.get_answer());
+
+    dbg!(&response);
+
+    match response.get_finishi_reason() {
+        FinishReason::ToolCalls => {
+            response.dyr_run_tool();
+            let tool_result = response.run_tool();
+            println!("the tool result is: {}", tool_result);
+        }
+        FinishReason::Stop => {}
+    }
 
     Ok(())
 }

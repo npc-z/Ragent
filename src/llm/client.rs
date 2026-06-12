@@ -33,19 +33,18 @@ impl ApiClient {
             .await
             .expect("client: todo the err");
 
-        match self.llm {
-            LlmType::DeepSeek => {
-                let text = raw_resp.text().await.expect("Unable to read response text");
-                // println!("the api text is: {}", text);
+        let text = raw_resp.text().await.expect("Unable to read response text");
+        println!("the api text is: {}", text);
 
-                serde_json::from_str::<DeepseekResponse>(text.as_str()).unwrap_or_else(|e| {
+        match self.llm {
+            LlmType::DeepSeek => serde_json::from_str::<DeepseekResponse>(text.as_str())
+                .unwrap_or_else(|e| {
                     panic!(
-                        "Unable to transform api response to {}, the err is {}",
+                        "Unable to transform {} api response, the err is {}",
                         LlmType::DeepSeek,
                         e
                     )
-                })
-            }
+                }),
         }
     }
 }

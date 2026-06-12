@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeepseekModel {
     DeepseekV4Pro,
