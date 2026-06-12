@@ -1,6 +1,6 @@
 use std::env;
 
-use reqwest::Client;
+use ragent::llm::client::ApiClient;
 
 fn read_user_input() -> Option<String> {
     let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
@@ -17,17 +17,20 @@ fn read_user_input() -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new();
-
     // 从 .env 文件加载环境变量
     dotenvy::dotenv().ok();
 
     // 读取单个环境变量，如果不存在就 panic（程序立即终止并给出提示）
     let api_key = env::var("OPENAI_API_KEY")
         .expect("请设置环境变量 OPENAI_API_KEY，或在项目根目录创建 .env 文件");
-
     let api_url =
         env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+
+    let client = ApiClient::builder()
+        .base_url(api_url)
+        .api_key(api_key)
+        .build()
+        .expect("config ApiClient failed");
 
     let model = env::var("MODEL").expect("请设置模型名称");
 
@@ -62,16 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     });
 
-    let response = client
-        .post(api_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&body)
-        .send()
-        .await?;
-
-    // 读取响应文本
-    let text = response.text().await?;
-    println!("{}", text);
+    // // 读取响应文本
+    let response = client.send(&body).await.expect("request failed");
+    println!("{}", response.text().await?);
 
     Ok(())
 }
