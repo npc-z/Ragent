@@ -1,6 +1,8 @@
-use std::env;
+use std::io::Read;
+use std::{env, process::Stdio};
 
 use ragent::llm::client::ApiClient;
+use ragent::llm::llm_type::LlmType;
 
 fn read_user_input() -> Option<String> {
     let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
@@ -27,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
     let client = ApiClient::builder()
+        .llm_type(LlmType::DeepSeek.as_str())
         .base_url(api_url)
         .api_key(api_key)
         .build()
@@ -66,8 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // // 读取响应文本
-    let response = client.send(&body).await.expect("request failed");
-    println!("{}", response.text().await?);
+    let response = client.send(&body).await;
+    // println!("{}", response.get_answer());
+    dbg!(response);
 
     Ok(())
 }
