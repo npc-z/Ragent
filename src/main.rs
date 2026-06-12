@@ -1,8 +1,7 @@
 use std::env;
 
-use ragent::llm::client::ApiClient;
 use ragent::llm::deepseek::enums::finish_reason::FinishReason;
-use ragent::llm::llm_type::LlmType;
+use ragent::llm::engine::engine::Engine;
 use ragent::llm::response::ApiResponse;
 
 fn read_user_input() -> Option<String> {
@@ -29,12 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_url =
         env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let client = ApiClient::builder()
-        .llm_type(LlmType::DeepSeek.as_str())
-        .base_url(api_url)
-        .api_key(api_key)
-        .build()
-        .expect("config ApiClient failed");
+    let engine = Engine::new(api_url, api_key);
 
     let model = env::var("MODEL").expect("请设置模型名称");
 
@@ -70,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 响应
-    let response = client.send(&body).await;
+    let response = engine.message(&body).await;
     println!("{}", response.get_answer());
 
     dbg!(&response);
