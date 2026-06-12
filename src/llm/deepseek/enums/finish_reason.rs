@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     ToolCalls,

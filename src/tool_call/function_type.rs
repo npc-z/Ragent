@@ -4,25 +4,25 @@ use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolCallType {
-    Function,
+pub enum ToolFunctionType {
+    Bash,
 }
 
-impl ToolCallType {
+impl ToolFunctionType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ToolCallType::Function => "function",
+            ToolFunctionType::Bash => "bash",
         }
     }
 }
 
-impl FromStr for ToolCallType {
+impl FromStr for ToolFunctionType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "function" => Ok(ToolCallType::Function),
-            _ => Err(format!("Unknown tool call type {}", s)),
+            "bash" => Ok(ToolFunctionType::Bash),
+            _ => Err(format!("Unknown tool function type {}", s)),
         }
     }
 }
