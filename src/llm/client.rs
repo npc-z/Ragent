@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::Value;
+use serde::Serialize;
 
 use crate::llm::deepseek::response::DeepseekResponse;
 use crate::llm::{llm_type::LlmType, response::ApiResponse};
@@ -20,7 +20,7 @@ impl ApiClient {
         ApiClientBuilder::default()
     }
 
-    pub async fn send(&self, body: &Value) -> impl ApiResponse {
+    pub async fn send(&self, body: &impl Serialize) -> impl ApiResponse {
         let client = Client::new();
 
         let raw_resp = client
