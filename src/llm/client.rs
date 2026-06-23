@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::Value;
+use serde::Serialize;
 
 use crate::llm::deepseek::response::DeepseekResponse;
 use crate::llm::{llm_type::LlmType, response::ApiResponse};
@@ -20,7 +20,7 @@ impl ApiClient {
         ApiClientBuilder::default()
     }
 
-    pub async fn send(&self, body: &Value) -> impl ApiResponse {
+    pub async fn send(&self, body: &impl Serialize) -> impl ApiResponse {
         let client = Client::new();
 
         let raw_resp = client
@@ -31,10 +31,20 @@ impl ApiClient {
             .timeout(Duration::from_secs(self.timeout_secs))
             .send()
             .await
-            .expect("client: todo the err");
+            .expect("client: send api err");
 
+        let status = raw_resp.status();
         let text = raw_resp.text().await.expect("Unable to read response text");
-        println!("the api text is: {}", text);
+
+        // println!(
+        //     "the api request body: {}",
+        //     serde_json::to_string_pretty(body).expect("invalid body")
+        // );
+        // println!("the api response status: {}, text is: {}", status, text);
+
+        if !status.is_success() {
+            panic!("api err");
+        }
 
         match self.llm {
             LlmType::DeepSeek => serde_json::from_str::<DeepseekResponse>(text.as_str())
