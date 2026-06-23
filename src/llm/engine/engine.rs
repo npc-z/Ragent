@@ -1,28 +1,268 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::llm::response::ApiResponse;
+use crate::llm::deepseek::enums::finish_reason::FinishReason;
+use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
+use crate::llm::response::{ApiResponse, ResponseMessage};
 use crate::llm::{client::ApiClient, llm_type::LlmType};
+use crate::tool_call::bash::BashFunction;
+use crate::tool_call::function_type::ToolFunctionType;
+use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Engine {
     client: ApiClient,
+    // model: String,
+    body: Body,
+
+    /// 对话轮次
+    turn_count: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Body {
+    model: String,
+    messages: Vec<Message>,
+    thinking: Value,
+    reasoning_effort: String,
+    stream: bool,
+    tools: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "role")]
+enum Message {
+    #[serde(rename = "system")]
+    System { content: String },
+
+    #[serde(rename = "assistant")]
+    Assistant {
+        content: String,
+        reasoning_content: String,
+        tool_calls: Option<Vec<ToolCall>>,
+    },
+
+    #[serde(rename = "user")]
+    User { content: String },
+
+    #[serde(rename = "tool")]
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
 }
 
 impl Engine {
     /// New engine
-    pub fn new(api_url: String, api_key: String) -> Self {
+    pub fn new(api_url: String, api_key: String, model: String) -> Self {
         let client = ApiClient::builder()
             .llm_type(LlmType::DeepSeek.as_str())
             .base_url(api_url)
             .api_key(api_key)
+            .timeout(60)
             .build()
             .expect("config ApiClient failed");
 
-        Engine { client }
+        let mut e = Engine {
+            client,
+            // model: model.clone(),
+            body: Body {
+                model: model.clone(),
+                messages: Vec::new(),
+                thinking: json!({"type": "enabled"}),
+                reasoning_effort: "high".to_string(),
+                stream: false,
+                tools: Vec::new(),
+            },
+            turn_count: 0,
+        };
+        e.init_body();
+        e
     }
 
-    /// Send message to the llm and get response
-    pub async fn message(&self, body: &Value) -> impl ApiResponse {
-        self.client.send(body).await
+    /// init the request body
+    fn init_body(&mut self) {
+        self.init_messages();
+        self.init_tools();
+    }
+
+    fn add_message(&mut self, msg: Message) {
+        self.show_message(&msg);
+        self.body.messages.push(msg);
+    }
+
+    fn show_message(&self, message: &Message) {
+        let s = "=".repeat(20);
+
+        match message {
+            Message::System { content } => {
+                println!("{}\nsystem:\n{}{}\n\n", s, content, s)
+            }
+
+            Message::Assistant {
+                content,
+                reasoning_content,
+                ..
+            } => println!(
+                "{}\nreasoning_content:\n{}\nassistant:\n{}\n{}\n\n",
+                s, reasoning_content, content, s
+            ),
+
+            Message::User { content, .. } => println!("{}\nuser:\n{}\n{}\n\n", s, content, s),
+
+            Message::Tool {
+                content: _content,
+                tool_call_id,
+            } => {
+                println!("{}\ntool({}):\n{}\n{}\n\n", s, tool_call_id, "muted now", s)
+            }
+        }
+    }
+
+    /// add user message to the body
+    fn add_user_message(&mut self, content: String) {
+        self.add_message(Message::User { content });
+    }
+
+    /// add system message to the body
+    fn add_system_message(&mut self, content: String) {
+        self.add_message(Message::System { content });
+    }
+
+    /// add tool call result message to the body
+    fn add_tool_call_result_message(&mut self, tool_result: ToolResult) {
+        self.add_message(Message::Tool {
+            content: tool_result.content,
+            tool_call_id: tool_result.tool_use_id,
+        });
+    }
+
+    /// add llm response message to the body
+    fn add_llm_response_message(&mut self, msg: ResponseMessage) {
+        self.add_message(Message::Assistant {
+            content: msg.content,
+            reasoning_content: msg.reasoning_content,
+            tool_calls: msg.tool_calls,
+        })
+    }
+
+    /// init the system message
+    fn init_messages(&mut self) {
+        let promotion = "You are a coding agent at {os.getcwd()}. Use bash to inspect and change the workspace. Act first, then report clearly";
+        self.add_system_message(promotion.to_string());
+    }
+
+    /// init tools, currently only bash
+    fn init_tools(&mut self) {
+        self.body.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "description": "Run a shell command in the current workspace.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string",},
+                    },
+                    "required": ["command"],
+                },
+            },
+        }));
+    }
+
+    /// Send message to the LLM and get the response
+    async fn send_message(&self) -> impl ApiResponse + use<'_> {
+        self.client.send(&self.body).await
+    }
+
+    /// Read user input
+    fn get_user_message(&mut self) {
+        let user_msg = read_user_input();
+        self.add_user_message(user_msg.unwrap_or_default());
+    }
+
+    /// Run the message loop, read user input, send message and get the response
+    pub async fn run_loop(&mut self) {
+        self.get_user_message();
+        self.run_one_turn().await;
+    }
+
+    /// 进行一个轮次
+    async fn run_one_turn(&mut self) {
+        let finish_reason;
+        let answer;
+        let tcqs;
+        {
+            let response = self.send_message().await;
+            finish_reason = response.get_finishi_reason();
+            answer = response.get_response_message();
+            tcqs = response.get_tool_calls();
+        }
+        self.add_llm_response_message(answer);
+
+        self.turn_count += 1;
+
+        match finish_reason {
+            FinishReason::ToolCalls => {
+                self.dyr_run_tool(&tcqs);
+                let tool_result = self.run_tools(&tcqs);
+
+                if !tool_result.is_empty() {
+                    for tr in &tool_result {
+                        self.add_tool_call_result_message(tr.clone());
+                    }
+                    Box::pin(self.run_one_turn()).await;
+                }
+            }
+            FinishReason::Stop => {}
+        }
+    }
+
+    fn run_tools(&self, tool_calls: &Vec<ToolCall>) -> Vec<ToolResult> {
+        let mut r: Vec<ToolResult> = Vec::new();
+
+        for tc in tool_calls {
+            match tc.r#type {
+                ToolCallType::Function => match tc.function.name {
+                    ToolFunctionType::Bash => {
+                        let bf = BashFunction::new(tc.id.clone(), tc.function.arguments.clone());
+
+                        // DEBUG: remove this
+                        // bf.show();
+
+                        let call_result = bf.run();
+                        if let Some(cr) = call_result {
+                            r.push(cr);
+                        }
+                    }
+                },
+            }
+        }
+
+        r
+    }
+
+    fn dyr_run_tool(&self, tool_calls: &Vec<ToolCall>) {
+        for tc in tool_calls {
+            println!(
+                "the idx={} {} command: {}",
+                tc.index,
+                tc.r#type.as_str(),
+                tc.function.arguments
+            );
+        }
+    }
+}
+
+fn read_user_input() -> Option<String> {
+    let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
+    let readline = rl.readline("ragent> ");
+
+    match readline {
+        Ok(line) => {
+            let line = line.trim().to_string();
+            Some(line)
+        }
+        Err(_) => None,
     }
 }

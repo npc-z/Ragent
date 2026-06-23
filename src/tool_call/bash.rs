@@ -3,14 +3,17 @@ use std::process::{Command, Output};
 
 use serde::Deserialize;
 
-use crate::tool_call::tool::FunctionTool;
+use crate::tool_call::tool::{FunctionTool, ToolResult};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BashFunction {
+    /// the tool use id
+    pub tool_use_id: String,
+    /// function call arguments
     arguments: Arguments,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Arguments {
     command: String,
 }
@@ -22,11 +25,14 @@ impl Display for Arguments {
 }
 
 impl BashFunction {
-    pub fn new(arguments: String) -> Self {
+    pub fn new(tool_use_id: String, arguments: String) -> Self {
         let arguments: Arguments =
             serde_json::from_str(&arguments).expect("failed to parse arguments for bash function");
 
-        BashFunction { arguments }
+        BashFunction {
+            tool_use_id,
+            arguments,
+        }
     }
 }
 
@@ -36,26 +42,36 @@ impl FunctionTool for BashFunction {
     }
 
     /// Run bash command
-    fn run(&self) -> String {
+    fn run(&self) -> Option<ToolResult> {
         // let dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"];
         let command = &self.arguments.command;
 
         if let Some(blocked) = check_dangerous(command) {
-            return blocked;
+            return Some(ToolResult {
+                r#type: "tool_result".to_string(),
+                tool_use_id: self.tool_use_id.to_string(),
+                content: blocked,
+            });
         }
 
         // get current dir
         let cwd = match std::env::current_dir() {
             Ok(d) => d,
-            Err(e) => return format!("Error: failed to get current dir: {}", e),
+            // Err(e) => return format!("Error: failed to get current dir: {}", e),
+            Err(e) => panic!("Error: failed to get current dir: {}", e),
         };
 
         let output = match run_command(command, &cwd) {
             Ok(o) => o,
-            Err(e) => return format!("Error: failed to execute command: {}", e),
+            // Err(e) => return format!("Error: failed to execute command: {}", e),
+            Err(e) => panic!("Error: failed to execute command: {}", e),
         };
 
-        format_output(&output)
+        Some(ToolResult {
+            r#type: "tool_result".to_string(),
+            tool_use_id: self.tool_use_id.to_string(),
+            content: format_output(&output),
+        })
     }
 }
 

@@ -1,21 +1,6 @@
 use std::env;
 
-use ragent::llm::deepseek::enums::finish_reason::FinishReason;
 use ragent::llm::engine::engine::Engine;
-use ragent::llm::response::ApiResponse;
-
-fn read_user_input() -> Option<String> {
-    let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
-    let readline = rl.readline("ragent> ");
-
-    match readline {
-        Ok(line) => {
-            let line = line.trim().to_string();
-            Some(line)
-        }
-        Err(_) => None,
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,55 +13,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_url =
         env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let engine = Engine::new(api_url, api_key);
-
     let model = env::var("MODEL").expect("请设置模型名称");
-
-    let user_msg = read_user_input();
-
-    // 构造 JSON body（也可以用 serde 序列化结构体）
-    let system = "You are a coding agent at {os.getcwd()}. Use bash to inspect and change the workspace. Act first, then report clearly";
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-          {"role": "system", "content": system},
-          {"role": "user", "content": user_msg}
-        ],
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
-        "stream": false,
-        "tools": [
-            {
-                "type": "function",
-                "function": {
-                    "name": "bash",
-                    "description": "Run a shell command in the current workspace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "command": {"type": "string",},
-                        },
-                        "required": ["command"],
-                    },
-                },
-            },
-        ],
-    });
+    let mut engine = Engine::new(api_url, api_key, model);
 
     // 响应
-    let response = engine.message(&body).await;
-    println!("{}", response.get_answer());
-
-    dbg!(&response);
-
-    match response.get_finishi_reason() {
-        FinishReason::ToolCalls => {
-            response.dyr_run_tool();
-            let tool_result = response.run_tool();
-            println!("the tool result is: {}", tool_result);
-        }
-        FinishReason::Stop => {}
-    }
+    engine.run_loop().await;
 
     Ok(())
 }

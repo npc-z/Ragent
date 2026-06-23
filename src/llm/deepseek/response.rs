@@ -2,11 +2,8 @@ use serde::Deserialize;
 
 use crate::llm::deepseek::enums::finish_reason::FinishReason;
 use crate::llm::deepseek::enums::model::DeepseekModel;
-use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
-use crate::llm::response::ApiResponse;
-use crate::tool_call::bash::BashFunction;
-use crate::tool_call::function_type::ToolFunctionType;
-use crate::tool_call::tool::FunctionTool;
+use crate::llm::response::{ApiResponse, ResponseMessage};
+use crate::tool_call::tool::ToolCall;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct DeepseekResponse {
@@ -21,38 +18,18 @@ pub struct DeepseekResponse {
 struct Choice {
     index: u16,
     finish_reason: FinishReason,
-    message: Message,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct Message {
-    role: String,
-    content: String,
-    reasoning_content: String,
-    tool_calls: Vec<ToolCall>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ToolCall {
-    index: u32,
-    id: String,
-    r#type: ToolCallType,
-    function: ToolCallFunction,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ToolCallFunction {
-    name: ToolFunctionType,
-    arguments: String, // e.g. "{\"command\": \"ls -la\"}"
-}
-
-impl DeepseekResponse {
-    fn get_tool_calls(&self) -> Vec<ToolCall> {
-        self.choices.first().unwrap().message.tool_calls.clone()
-    }
+    message: ResponseMessage,
 }
 
 impl ApiResponse for DeepseekResponse {
+    /// get the first llm response message
+    fn get_response_message(&self) -> ResponseMessage {
+        self.choices
+            .first()
+            .map(|c| c.message.clone())
+            .expect("Can not get response message")
+    }
+
     fn get_answer(&self) -> String {
         self.choices
             .first()
@@ -71,39 +48,10 @@ impl ApiResponse for DeepseekResponse {
         self.choices.first().unwrap().finish_reason
     }
 
-    fn run_tool(&self) -> String {
-        // TODO: run all tool
-        if let Some(tl) = self.get_tool_calls().into_iter().next() {
-            match tl.r#type {
-                ToolCallType::Function => match tl.function.name {
-                    ToolFunctionType::Bash => {
-                        let bf = BashFunction::new(tl.function.arguments);
-
-                        // debug
-                        bf.show();
-
-                        let call_result = bf.run();
-                        return call_result;
-                    }
-                },
-            }
-        }
-
-        "".to_string()
-    }
-
-    fn dyr_run_tool(&self) {
-        println!(
-            "the command to run is: {}",
-            self.choices
-                .first()
-                .unwrap()
-                .message
-                .tool_calls
-                .first()
-                .unwrap()
-                .function
-                .arguments
-        );
+    fn get_tool_calls(&self) -> Vec<ToolCall> {
+        if let Some(tcs) = self.choices.first().unwrap().message.tool_calls.clone() {
+            return tcs;
+        };
+        Vec::new()
     }
 }
