@@ -9,6 +9,7 @@ use crate::llm::{client::ApiClient, llm_type::LlmType};
 use crate::tool_call::bash::BashFunction;
 use crate::tool_call::edit_file::EditFileFunction;
 use crate::tool_call::function_type::ToolFunctionType;
+use crate::tool_call::glob_file::GlobFileFunction;
 use crate::tool_call::read_file::ReadFileFunction;
 use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
 use crate::tool_call::write_file::WriteFileFunction;
@@ -249,20 +250,21 @@ impl Engine {
         }));
 
         // glob
-        // self.body.tools.push(json!({
-        //     "type": "function",
-        //     "function": {
-        //         "name": ToolFunctionType::Glob.as_str(),
-        //         "description": "Find files matching a glob pattern",
-        //         "parameters": {
-        //             "type": "object",
-        //             "properties": {
-        //                 "pattern": {"type": "string",},
-        //             },
-        //             "required": ["pattern"],
-        //         },
-        //     },
-        // }));
+        self.body.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::Glob.as_str(),
+                "description": "Find files matching a glob pattern",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string",},
+                        "pattern": {"type": "string",},
+                    },
+                    "required": ["path","pattern"],
+                },
+            },
+        }));
     }
 
     /// Send message to the LLM and get the response
@@ -359,7 +361,16 @@ impl Engine {
                         r.push(call_result);
                     }
 
-                    ToolFunctionType::Glob => todo!(),
+                    // glob file
+                    ToolFunctionType::Glob => {
+                        let func = GlobFileFunction::new(
+                            self.work_dir.clone(),
+                            tc.id.clone(),
+                            tc.function.arguments.clone(),
+                        );
+                        let call_result = func.run();
+                        r.push(call_result);
+                    }
                 },
             }
         }

@@ -122,6 +122,43 @@ pub fn edit_file(workdir: &Path, path: &str, old_text: String, new_text: String)
     }
 }
 
+/// Glob 文件路径
+pub fn glob_file(workdir: &Path, path: &str, pattern: String) -> String {
+    match safe_path(workdir, path) {
+        Ok(path_buf) => {
+            if !path_buf.exists() {
+                return format!("Error: {} does not exist", &path_buf.display());
+            }
+
+            let mut matched_files = Vec::new();
+            let walker = walkdir::WalkDir::new(&path_buf).into_iter();
+
+            for entry in walker.filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    let file_name = entry.file_name().to_string_lossy();
+                    if glob::Pattern::new(&pattern)
+                        .map(|p| p.matches(&file_name))
+                        .unwrap_or(false)
+                    {
+                        matched_files.push(entry.path().display().to_string());
+                    }
+                }
+            }
+
+            if matched_files.is_empty() {
+                format!(
+                    "No files matched the pattern '{}' in '{}'",
+                    pattern,
+                    path_buf.display()
+                )
+            } else {
+                matched_files.join("\n")
+            }
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

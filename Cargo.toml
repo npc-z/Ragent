@@ -5,8 +5,10 @@ edition = "2024"
 
 [dependencies]
 dotenvy = "0.15"    # 负责从 .env 文件加载环境变量
+glob = "0.3.3"
 reqwest = { version = "0.13", features = ["json"] }  # 如果需要发送/接收 JSON
 rustyline = "18"
 serde = { version = "1", features = ["derive"] }   # 如果想用 #[derive(Serialize, Deserialize)]
 serde_json = "1"                                    # 手动添加，用于构造/解析 JSON
 tokio = { version = "1", features = ["full"] }      # 异步运行时
+walkdir = "2.5.0"
