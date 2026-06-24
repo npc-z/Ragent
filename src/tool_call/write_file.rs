@@ -1,10 +1,9 @@
 use std::fmt::Display;
-use std::fs::{self};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::tool_call::helpers::safe_path;
+use crate::tool_call::helpers::write_file;
 use crate::tool_call::tool::{FunctionTool, ToolResult};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,16 +56,5 @@ impl FunctionTool for WriteFileFunction {
             tool_use_id: self.tool_use_id.to_string(),
             content,
         }
-    }
-}
-
-/// 写入文件
-pub fn write_file(workdir: &Path, path: &str, content: String) -> String {
-    match safe_path(workdir, path) {
-        Ok(path_buf) => match fs::write(&path_buf, content) {
-            Ok(_) => format!("Wrote content to {} successful", &path_buf.display()),
-            Err(e) => format!("{}", e),
-        },
-        Err(e) => format!("Error: {}", e),
     }
 }

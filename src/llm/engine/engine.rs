@@ -7,6 +7,7 @@ use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
 use crate::llm::response::{ApiResponse, ResponseMessage};
 use crate::llm::{client::ApiClient, llm_type::LlmType};
 use crate::tool_call::bash::BashFunction;
+use crate::tool_call::edit_file::EditFileFunction;
 use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::read_file::ReadFileFunction;
 use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
@@ -347,7 +348,17 @@ impl Engine {
                         r.push(call_result);
                     }
 
-                    ToolFunctionType::EditFile => todo!(),
+                    // edit file
+                    ToolFunctionType::EditFile => {
+                        let func = EditFileFunction::new(
+                            self.work_dir.clone(),
+                            tc.id.clone(),
+                            tc.function.arguments.clone(),
+                        );
+                        let call_result = func.run();
+                        r.push(call_result);
+                    }
+
                     ToolFunctionType::Glob => todo!(),
                 },
             }

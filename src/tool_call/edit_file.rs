@@ -3,13 +3,12 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::tool_call::{
-    helpers::read_file,
-    tool::{FunctionTool, ToolResult},
-};
+use crate::tool_call::helpers::edit_file;
+use crate::tool_call::tool::{FunctionTool, ToolResult};
 
+/// Replace exact text in a file once
 #[derive(Debug, Clone, Deserialize)]
-pub struct ReadFileFunction {
+pub struct EditFileFunction {
     /// work dir
     workdir: PathBuf,
     /// the tool use id
@@ -21,21 +20,26 @@ pub struct ReadFileFunction {
 #[derive(Debug, Clone, Deserialize)]
 struct Arguments {
     path: String,
-    limit: Option<usize>,
+    old_text: String,
+    new_text: String,
 }
 
 impl Display for Arguments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "path={}, limit={:?}", self.path, self.limit)
+        write!(
+            f,
+            "path={}, old={}, new={}",
+            self.path, self.old_text, self.new_text
+        )
     }
 }
 
-impl ReadFileFunction {
+impl EditFileFunction {
     pub fn new(workdir: PathBuf, tool_use_id: String, arguments: String) -> Self {
         let arguments: Arguments = serde_json::from_str(&arguments)
-            .expect("failed to parse arguments for ReadFileFunction function");
+            .expect("failed to parse arguments for EditFileFunction function");
 
-        ReadFileFunction {
+        EditFileFunction {
             workdir,
             tool_use_id,
             arguments,
@@ -43,15 +47,20 @@ impl ReadFileFunction {
     }
 }
 
-impl FunctionTool for ReadFileFunction {
+impl FunctionTool for EditFileFunction {
     fn show(&self) {
-        println!("ReadFileFunction: arguments={}", self.arguments)
+        println!("EditFileFunction: arguments={}", self.arguments)
     }
 
     /// Run read file
     fn run(&self) -> ToolResult {
         let path = &self.arguments.path;
-        let content = read_file(&self.workdir, path, self.arguments.limit);
+        let content = edit_file(
+            &self.workdir,
+            path,
+            self.arguments.old_text.clone(),
+            self.arguments.new_text.clone(),
+        );
 
         ToolResult {
             r#type: "tool_result".to_string(),

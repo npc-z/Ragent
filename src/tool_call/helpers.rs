@@ -1,4 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 /// 规范化路径，去除 `.` 和 `..`（仅词法层面，不访问文件系统）
 fn normalize_path(path: &Path) -> PathBuf {
@@ -50,6 +53,72 @@ pub fn safe_path(workdir: &Path, p: &str) -> Result<PathBuf, String> {
     match norm.strip_prefix(&workdir_norm) {
         Ok(_) => Ok(norm),
         Err(_) => Err(format!("Path escapes workspace: {}", p)),
+    }
+}
+
+/// 读取文件，限制行数（如果 limit 为 Some，则只取前 limit 行并追加提示）。
+/// 若发生任何错误，返回以 "Error: " 开头的错误信息。
+pub fn read_file(workdir: &Path, path: &str, limit: Option<usize>) -> String {
+    match safe_path(workdir, path) {
+        Ok(path_buf) => match fs::read_to_string(&path_buf) {
+            Ok(content) => {
+                let mut lines: Vec<String> = content.lines().map(|x| x.to_string()).collect();
+                let total_lines = lines.len();
+                if let Some(lim) = limit {
+                    if lim < total_lines {
+                        lines.truncate(lim);
+                        let last_line = format!("... ({} more lines)", total_lines - lim);
+                        lines.push(last_line.to_string());
+                    }
+                }
+                lines.join("\n")
+            }
+            Err(e) => format!("Error: {}", e),
+        },
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+/// 写入文件
+pub fn write_file(workdir: &Path, path: &str, content: String) -> String {
+    match safe_path(workdir, path) {
+        Ok(path_buf) => match fs::write(&path_buf, content) {
+            Ok(_) => format!("Wrote content to {} successful", &path_buf.display()),
+            Err(e) => format!("{}", e),
+        },
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+/// 编辑文件
+pub fn edit_file(workdir: &Path, path: &str, old_text: String, new_text: String) -> String {
+    match safe_path(workdir, path) {
+        Ok(path_buf) => {
+            if path_buf.is_dir() {
+                return format!("Error: {} is a directory", &path_buf.display());
+            }
+
+            if !path_buf.exists() {
+                return format!("Error: {} does not exist", &path_buf.display());
+            }
+
+            // TODO: 错误处理，迫在眉睫
+            let original = read_file(workdir, path, None);
+
+            if !original.contains(&old_text) {
+                return format!(
+                    "Error: {} does not contain the old text",
+                    &path_buf.display()
+                );
+            }
+            let new_content = original.replace(&old_text, &new_text);
+
+            match fs::write(&path_buf, new_content) {
+                Ok(_) => format!("Edit to {} successful", &path_buf.display()),
+                Err(e) => format!("{}", e),
+            }
+        }
+        Err(e) => format!("Error: {}", e),
     }
 }
 
