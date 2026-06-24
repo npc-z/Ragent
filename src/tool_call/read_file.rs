@@ -31,8 +31,8 @@ impl Display for Arguments {
 
 impl ReadFileFunction {
     pub fn new(workdir: PathBuf, tool_use_id: String, arguments: String) -> Self {
-        let arguments: Arguments =
-            serde_json::from_str(&arguments).expect("failed to parse arguments for bash function");
+        let arguments: Arguments = serde_json::from_str(&arguments)
+            .expect("failed to parse arguments for ReadFileFunction function");
 
         ReadFileFunction {
             workdir,
@@ -44,7 +44,7 @@ impl ReadFileFunction {
 
 impl FunctionTool for ReadFileFunction {
     fn show(&self) {
-        println!("BashCall: arguments={}", self.arguments)
+        println!("ReadFileFunction: arguments={}", self.arguments)
     }
 
     /// Run read file

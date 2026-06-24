@@ -10,6 +10,7 @@ use crate::tool_call::bash::BashFunction;
 use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::read_file::ReadFileFunction;
 use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
+use crate::tool_call::write_file::WriteFileFunction;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -317,12 +318,14 @@ impl Engine {
         for tc in tool_calls {
             match tc.r#type {
                 ToolCallType::Function => match tc.function.name {
+                    // bash
                     ToolFunctionType::Bash => {
                         let func = BashFunction::new(tc.id.clone(), tc.function.arguments.clone());
                         let call_result = func.run();
                         r.push(call_result);
                     }
 
+                    // read file
                     ToolFunctionType::ReadFile => {
                         let func = ReadFileFunction::new(
                             self.work_dir.clone(),
@@ -333,7 +336,17 @@ impl Engine {
                         r.push(call_result);
                     }
 
-                    ToolFunctionType::WriteFile => todo!(),
+                    // write file
+                    ToolFunctionType::WriteFile => {
+                        let func = WriteFileFunction::new(
+                            self.work_dir.clone(),
+                            tc.id.clone(),
+                            tc.function.arguments.clone(),
+                        );
+                        let call_result = func.run();
+                        r.push(call_result);
+                    }
+
                     ToolFunctionType::EditFile => todo!(),
                     ToolFunctionType::Glob => todo!(),
                 },
