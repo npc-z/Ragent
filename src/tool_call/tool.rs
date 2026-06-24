@@ -8,7 +8,7 @@ use crate::{
 
 pub trait FunctionTool: Debug {
     fn show(&self);
-    fn run(&self) -> Option<ToolResult>;
+    fn run(&self) -> ToolResult;
 }
 
 #[derive(Debug, Clone, Serialize)]

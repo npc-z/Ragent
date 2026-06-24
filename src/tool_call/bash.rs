@@ -42,16 +42,16 @@ impl FunctionTool for BashFunction {
     }
 
     /// Run bash command
-    fn run(&self) -> Option<ToolResult> {
+    fn run(&self) -> ToolResult {
         // let dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"];
         let command = &self.arguments.command;
 
         if let Some(blocked) = check_dangerous(command) {
-            return Some(ToolResult {
+            return ToolResult {
                 r#type: "tool_result".to_string(),
                 tool_use_id: self.tool_use_id.to_string(),
                 content: blocked,
-            });
+            };
         }
 
         // get current dir
@@ -67,11 +67,11 @@ impl FunctionTool for BashFunction {
             Err(e) => panic!("Error: failed to execute command: {}", e),
         };
 
-        Some(ToolResult {
+        ToolResult {
             r#type: "tool_result".to_string(),
             tool_use_id: self.tool_use_id.to_string(),
             content: format_output(&output),
-        })
+        }
     }
 }
 

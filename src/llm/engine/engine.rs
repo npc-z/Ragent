@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde_json::{Value, json};
 
 use crate::llm::deepseek::enums::finish_reason::FinishReason;
@@ -6,6 +8,7 @@ use crate::llm::response::{ApiResponse, ResponseMessage};
 use crate::llm::{client::ApiClient, llm_type::LlmType};
 use crate::tool_call::bash::BashFunction;
 use crate::tool_call::function_type::ToolFunctionType;
+use crate::tool_call::read_file::ReadFileFunction;
 use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +20,7 @@ pub struct Engine {
 
     /// 对话轮次
     turn_count: u16,
+    work_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +67,16 @@ impl Engine {
             .build()
             .expect("config ApiClient failed");
 
+        // let cwd = env::current_dir()?;
+        // let canonical_cwd = fs::canonicalize(&cwd)?;
+
+        // get current dir
+        let cwd = match std::env::current_dir() {
+            Ok(d) => d,
+            // Err(e) => return format!("Error: failed to get current dir: {}", e),
+            Err(e) => panic!("Error: failed to get current dir: {}", e),
+        };
+
         let mut e = Engine {
             client,
             // model: model.clone(),
@@ -75,6 +89,7 @@ impl Engine {
                 tools: Vec::new(),
             },
             turn_count: 0,
+            work_dir: cwd,
         };
         e.init_body();
         e
@@ -92,11 +107,12 @@ impl Engine {
     }
 
     fn show_message(&self, message: &Message) {
-        let s = "=".repeat(20);
+        let begin = ">".repeat(40);
+        let end = "<".repeat(40);
 
         match message {
             Message::System { content } => {
-                println!("{}\nsystem:\n{}{}\n\n", s, content, s)
+                println!("{}\nsystem:\n{}\n{}\n\n", begin, content, end)
             }
 
             Message::Assistant {
@@ -105,16 +121,21 @@ impl Engine {
                 ..
             } => println!(
                 "{}\nreasoning_content:\n{}\nassistant:\n{}\n{}\n\n",
-                s, reasoning_content, content, s
+                begin, reasoning_content, content, end
             ),
 
-            Message::User { content, .. } => println!("{}\nuser:\n{}\n{}\n\n", s, content, s),
+            Message::User { content, .. } => {
+                println!("{}\nuser:\n{}\n{}\n\n", begin, content, end)
+            }
 
             Message::Tool {
                 content: _content,
                 tool_call_id,
             } => {
-                println!("{}\ntool({}):\n{}\n{}\n\n", s, tool_call_id, "muted now", s)
+                println!(
+                    "{}\ntool({}):\n{}\n{}\n\n",
+                    begin, tool_call_id, "muted now", end
+                )
             }
         }
     }
@@ -148,17 +169,21 @@ impl Engine {
 
     /// init the system message
     fn init_messages(&mut self) {
-        let promotion = "You are a coding agent at {os.getcwd()}. Use bash to inspect and change the workspace. Act first, then report clearly";
+        let promotion = format!(
+            "You are a coding agent at {}. Use tools to solve tasks. Act first, then report clearly",
+            self.work_dir.display()
+        );
         self.add_system_message(promotion.to_string());
     }
 
     /// init tools, currently only bash
     fn init_tools(&mut self) {
+        // bash
         self.body.tools.push(json!({
             "type": "function",
             "function": {
-                "name": "bash",
-                "description": "Run a shell command in the current workspace.",
+                "name": ToolFunctionType::Bash.as_str(),
+                "description": "Run a shell command.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -168,6 +193,74 @@ impl Engine {
                 },
             },
         }));
+
+        // read file
+        self.body.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::ReadFile.as_str(),
+                "description": "Read file contents.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string",},
+                        "limit": {"type": "integer",},
+                    },
+                    "required": ["path"],
+                },
+            },
+        }));
+
+        // write file
+        self.body.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::WriteFile.as_str(),
+                "description": "Write content to a file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string",},
+                        "content": {"type": "string",},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        }));
+
+        // edit file
+        self.body.tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::EditFile.as_str(),
+                "description": "Replace exact text in a file once",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string",},
+                        "old_text": {"type": "string",},
+                        "new_text": {"type": "string",},
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                },
+            },
+        }));
+
+        // glob
+        // self.body.tools.push(json!({
+        //     "type": "function",
+        //     "function": {
+        //         "name": ToolFunctionType::Glob.as_str(),
+        //         "description": "Find files matching a glob pattern",
+        //         "parameters": {
+        //             "type": "object",
+        //             "properties": {
+        //                 "pattern": {"type": "string",},
+        //             },
+        //             "required": ["pattern"],
+        //         },
+        //     },
+        // }));
     }
 
     /// Send message to the LLM and get the response
@@ -225,16 +318,24 @@ impl Engine {
             match tc.r#type {
                 ToolCallType::Function => match tc.function.name {
                     ToolFunctionType::Bash => {
-                        let bf = BashFunction::new(tc.id.clone(), tc.function.arguments.clone());
-
-                        // DEBUG: remove this
-                        // bf.show();
-
-                        let call_result = bf.run();
-                        if let Some(cr) = call_result {
-                            r.push(cr);
-                        }
+                        let func = BashFunction::new(tc.id.clone(), tc.function.arguments.clone());
+                        let call_result = func.run();
+                        r.push(call_result);
                     }
+
+                    ToolFunctionType::ReadFile => {
+                        let func = ReadFileFunction::new(
+                            self.work_dir.clone(),
+                            tc.id.clone(),
+                            tc.function.arguments.clone(),
+                        );
+                        let call_result = func.run();
+                        r.push(call_result);
+                    }
+
+                    ToolFunctionType::WriteFile => todo!(),
+                    ToolFunctionType::EditFile => todo!(),
+                    ToolFunctionType::Glob => todo!(),
                 },
             }
         }
@@ -245,8 +346,9 @@ impl Engine {
     fn dyr_run_tool(&self, tool_calls: &Vec<ToolCall>) {
         for tc in tool_calls {
             println!(
-                "the idx={} {} command: {}",
+                "the idx={} {} {} arguments: {}",
                 tc.index,
+                tc.function.name.as_str(),
                 tc.r#type.as_str(),
                 tc.function.arguments
             );
