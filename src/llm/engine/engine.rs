@@ -70,9 +70,6 @@ impl Engine {
             .build()
             .expect("config ApiClient failed");
 
-        // let cwd = env::current_dir()?;
-        // let canonical_cwd = fs::canonicalize(&cwd)?;
-
         // get current dir
         let cwd = match std::env::current_dir() {
             Ok(d) => d,
@@ -319,60 +316,36 @@ impl Engine {
         let mut r: Vec<ToolResult> = Vec::new();
 
         for tc in tool_calls {
-            match tc.r#type {
+            let func: Box<dyn FunctionTool> = match tc.r#type {
                 ToolCallType::Function => match tc.function.name {
-                    // bash
-                    ToolFunctionType::Bash => {
-                        let func = BashFunction::new(tc.id.clone(), tc.function.arguments.clone());
-                        let call_result = func.run();
-                        r.push(call_result);
-                    }
-
-                    // read file
-                    ToolFunctionType::ReadFile => {
-                        let func = ReadFileFunction::new(
-                            self.work_dir.clone(),
-                            tc.id.clone(),
-                            tc.function.arguments.clone(),
-                        );
-                        let call_result = func.run();
-                        r.push(call_result);
-                    }
-
-                    // write file
-                    ToolFunctionType::WriteFile => {
-                        let func = WriteFileFunction::new(
-                            self.work_dir.clone(),
-                            tc.id.clone(),
-                            tc.function.arguments.clone(),
-                        );
-                        let call_result = func.run();
-                        r.push(call_result);
-                    }
-
-                    // edit file
-                    ToolFunctionType::EditFile => {
-                        let func = EditFileFunction::new(
-                            self.work_dir.clone(),
-                            tc.id.clone(),
-                            tc.function.arguments.clone(),
-                        );
-                        let call_result = func.run();
-                        r.push(call_result);
-                    }
-
-                    // glob file
-                    ToolFunctionType::Glob => {
-                        let func = GlobFileFunction::new(
-                            self.work_dir.clone(),
-                            tc.id.clone(),
-                            tc.function.arguments.clone(),
-                        );
-                        let call_result = func.run();
-                        r.push(call_result);
-                    }
+                    ToolFunctionType::Bash => Box::new(BashFunction::new(
+                        tc.id.clone(),
+                        tc.function.arguments.clone(),
+                    )),
+                    ToolFunctionType::ReadFile => Box::new(ReadFileFunction::new(
+                        self.work_dir.clone(),
+                        tc.id.clone(),
+                        tc.function.arguments.clone(),
+                    )),
+                    ToolFunctionType::WriteFile => Box::new(WriteFileFunction::new(
+                        self.work_dir.clone(),
+                        tc.id.clone(),
+                        tc.function.arguments.clone(),
+                    )),
+                    ToolFunctionType::EditFile => Box::new(EditFileFunction::new(
+                        self.work_dir.clone(),
+                        tc.id.clone(),
+                        tc.function.arguments.clone(),
+                    )),
+                    ToolFunctionType::Glob => Box::new(GlobFileFunction::new(
+                        self.work_dir.clone(),
+                        tc.id.clone(),
+                        tc.function.arguments.clone(),
+                    )),
                 },
-            }
+            };
+            let call_result = func.run();
+            r.push(call_result);
         }
 
         r
