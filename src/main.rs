@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::env;
 
-use ragent::llm::engine::engine::Engine;
+use ragent::llm::engine::agent::Engine;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
