@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::error::RagentError;
 use reqwest::Client;
 use serde::Serialize;
 
@@ -20,7 +21,7 @@ impl ApiClient {
         ApiClientBuilder::default()
     }
 
-    pub async fn send(&self, body: &impl Serialize) -> impl ApiResponse {
+    pub async fn send(&self, body: &impl Serialize) -> Result<impl ApiResponse, RagentError> {
         let client = Client::new();
 
         let raw_resp = client
@@ -31,10 +32,13 @@ impl ApiClient {
             .timeout(Duration::from_secs(self.timeout_secs))
             .send()
             .await
-            .expect("client: send api err");
+            .map_err(|e| RagentError::ApiRequest(e.to_string()))?;
 
         let status = raw_resp.status();
-        let text = raw_resp.text().await.expect("Unable to read response text");
+        let text = raw_resp
+            .text()
+            .await
+            .map_err(|e| RagentError::ApiRequest(e.to_string()))?;
 
         // println!(
         //     "the api request body: {}",
@@ -43,18 +47,21 @@ impl ApiClient {
         // println!("the api response status: {}, text is: {}", status, text);
 
         if !status.is_success() {
-            panic!("api err");
+            return Err(RagentError::ApiStatus {
+                status: status.as_u16(),
+                body: text,
+            });
         }
 
         match self.llm {
-            LlmType::DeepSeek => serde_json::from_str::<DeepseekResponse>(text.as_str())
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Unable to transform {} api response, the err is {}",
-                        LlmType::DeepSeek,
-                        e
-                    )
-                }),
+            LlmType::DeepSeek => {
+                serde_json::from_str::<DeepseekResponse>(text.as_str()).map_err(|e| {
+                    RagentError::ApiParse {
+                        llm: LlmType::DeepSeek.to_string(),
+                        e: e.to_string(),
+                    }
+                })
+            }
         }
     }
 }
@@ -70,14 +77,15 @@ pub struct ApiClientBuilder {
 
 impl ApiClientBuilder {
     // set llm type
-    pub fn llm_type(mut self, llm_type: &str) -> Self {
-        let llm =
-            LlmType::from_str(llm_type).unwrap_or_else(|_| panic!("Unsupported llm {}", llm_type));
+    pub fn llm_type(mut self, llm_type: &str) -> Result<Self, RagentError> {
+        let llm = LlmType::from_str(llm_type)
+            .map_err(|_| RagentError::UnsupportedLlm(llm_type.to_string()))?;
         self.llm = Some(llm);
-        self
+        Ok(self)
     }
+
     // set base_url
-    pub fn base_url(mut self, url: String) -> Self {
+    pub fn set_base_url(mut self, url: String) -> Self {
         self.base_url = Some(url);
         self
     }
@@ -101,11 +109,20 @@ impl ApiClientBuilder {
     }
 
     // build ApiClient
-    pub fn build(self) -> Result<ApiClient, &'static str> {
+    pub fn build(self) -> Result<ApiClient, RagentError> {
         Ok(ApiClient {
-            llm: self.llm.ok_or("llm is required")?,
-            base_url: self.base_url.ok_or("base_url is required")?,
-            api_key: self.api_key.ok_or("api_key is required")?,
+            llm: self
+                .llm
+                .ok_or(RagentError::ClientBuild("llm is required".to_string()))?,
+
+            base_url: self
+                .base_url
+                .ok_or(RagentError::ClientBuild("base_url is required".to_string()))?,
+
+            api_key: self
+                .api_key
+                .ok_or(RagentError::ClientBuild("api_key is required".to_string()))?,
+
             timeout_secs: self.timeout_secs.unwrap_or(30),
         })
     }

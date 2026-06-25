@@ -1,8 +1,12 @@
 use std::fmt::Display;
 use std::process::{Command, Output};
 
+use std::{path::Path, process::Stdio};
+
 use serde::Deserialize;
 
+use crate::error::RagentError;
+use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::tool::{FunctionTool, ToolResult};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -25,14 +29,18 @@ impl Display for Arguments {
 }
 
 impl BashFunction {
-    pub fn new(tool_use_id: String, arguments: String) -> Self {
+    pub fn new(tool_use_id: String, arguments: String) -> Result<Self, RagentError> {
         let arguments: Arguments =
-            serde_json::from_str(&arguments).expect("failed to parse arguments for bash function");
+            serde_json::from_str(&arguments).map_err(|e| RagentError::InvalidToolArguments {
+                tool: ToolFunctionType::Bash.as_str().to_string(),
+                arguments: arguments.clone(),
+                err: e,
+            })?;
 
-        BashFunction {
+        Ok(BashFunction {
             tool_use_id,
             arguments,
-        }
+        })
     }
 }
 
@@ -57,14 +65,24 @@ impl FunctionTool for BashFunction {
         // get current dir
         let cwd = match std::env::current_dir() {
             Ok(d) => d,
-            // Err(e) => return format!("Error: failed to get current dir: {}", e),
-            Err(e) => panic!("Error: failed to get current dir: {}", e),
+            Err(e) => {
+                return ToolResult {
+                    r#type: "tool_result".to_string(),
+                    tool_use_id: self.tool_use_id.to_string(),
+                    content: format!("Error: failed to get current dir: {}", e),
+                };
+            }
         };
 
         let output = match run_command(command, &cwd) {
             Ok(o) => o,
-            // Err(e) => return format!("Error: failed to execute command: {}", e),
-            Err(e) => panic!("Error: failed to execute command: {}", e),
+            Err(e) => {
+                return ToolResult {
+                    r#type: "tool_result".to_string(),
+                    tool_use_id: self.tool_use_id.to_string(),
+                    content: format!("Error: failed to execute command: {}", e),
+                };
+            }
         };
 
         ToolResult {
@@ -97,20 +115,24 @@ fn format_output(output: &Output) -> String {
 
 /// 执行 shell 命令，阻塞等待完成
 #[cfg(unix)]
-fn run_command(command: &str, cwd: &std::path::Path) -> std::io::Result<Output> {
+fn run_command(command: &str, cwd: &Path) -> std::io::Result<Output> {
     Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(cwd)
+        .stdin(Stdio::null()) // 防止 shell 等 stdin
+        // TODO:
+        // .wait_timeout(std::time::Duration::from_secs(30))? // 设置超时
         .output()
 }
 
 #[cfg(windows)]
-fn run_command(command: &str, cwd: &std::path::Path) -> std::io::Result<Output> {
+fn run_command(command: &str, cwd: &Path) -> std::io::Result<Output> {
     Command::new("cmd")
         .arg("/C")
         .arg(command)
         .current_dir(cwd)
+        .stdin(Stdio::null()) // 防止 shell 等 stdin
         .output()
 }
 

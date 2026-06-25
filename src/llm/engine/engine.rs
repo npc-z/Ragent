@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use serde_json::{Value, json};
 
 use crate::llm::deepseek::enums::finish_reason::FinishReason;
@@ -61,21 +62,19 @@ enum Message {
 
 impl Engine {
     /// New engine
-    pub fn new(api_url: String, api_key: String, model: String) -> Self {
+    pub fn new(api_url: String, api_key: String, model: String) -> anyhow::Result<Self> {
         let client = ApiClient::builder()
-            .llm_type(LlmType::DeepSeek.as_str())
-            .base_url(api_url)
+            .llm_type(LlmType::DeepSeek.as_str())?
+            .set_base_url(api_url)
             .api_key(api_key)
             .timeout(60)
-            .build()
-            .expect("config ApiClient failed");
+            .build()?;
 
         // get current dir
-        let cwd = match std::env::current_dir() {
-            Ok(d) => d,
-            // Err(e) => return format!("Error: failed to get current dir: {}", e),
-            Err(e) => panic!("Error: failed to get current dir: {}", e),
-        };
+        let cwd = std::env::current_dir()
+            .context("Failed to get current directory")?
+            .canonicalize()
+            .context("Failed to canonicalize current directory")?;
 
         let mut e = Engine {
             client,
@@ -92,7 +91,8 @@ impl Engine {
             work_dir: cwd,
         };
         e.init_body();
-        e
+
+        Ok(e)
     }
 
     /// init the request body
@@ -265,54 +265,62 @@ impl Engine {
     }
 
     /// Send message to the LLM and get the response
-    async fn send_message(&self) -> impl ApiResponse + use<'_> {
-        self.client.send(&self.body).await
+    async fn send_message(&self) -> anyhow::Result<impl ApiResponse + use<'_>> {
+        Ok(self.client.send(&self.body).await?)
     }
 
     /// Read user input
-    fn get_user_message(&mut self) {
-        let user_msg = read_user_input();
-        self.add_user_message(user_msg.unwrap_or_default());
+    fn get_user_message(&mut self) -> anyhow::Result<()> {
+        let user_msg = read_user_input()?;
+        self.add_user_message(user_msg);
+        Ok(())
     }
 
     /// Run the message loop, read user input, send message and get the response
-    pub async fn run_loop(&mut self) {
-        self.get_user_message();
-        self.run_one_turn().await;
-    }
+    pub async fn run_loop(&mut self) -> anyhow::Result<()> {
+        self.get_user_message()?;
 
-    /// 进行一个轮次
-    async fn run_one_turn(&mut self) {
-        let finish_reason;
-        let answer;
-        let tcqs;
-        {
-            let response = self.send_message().await;
-            finish_reason = response.get_finishi_reason();
-            answer = response.get_response_message();
-            tcqs = response.get_tool_calls();
-        }
-        self.add_llm_response_message(answer);
+        // 进行一个轮次
+        loop {
+            let finish_reason;
+            let answer;
+            let tcqs;
+            {
+                let response = self.send_message().await?;
+                finish_reason = response.get_finishi_reason();
+                answer = response.get_response_message()?;
+                tcqs = response.get_tool_calls();
+            }
 
-        self.turn_count += 1;
+            self.add_llm_response_message(answer);
+            self.turn_count += 1;
 
-        match finish_reason {
-            FinishReason::ToolCalls => {
-                self.dyr_run_tool(&tcqs);
-                let tool_result = self.run_tools(&tcqs);
+            match finish_reason {
+                FinishReason::ToolCalls => {
+                    self.dyr_run_tool(&tcqs);
+                    let tool_result = self.run_tools(&tcqs)?;
 
-                if !tool_result.is_empty() {
-                    for tr in &tool_result {
-                        self.add_tool_call_result_message(tr.clone());
+                    if !tool_result.is_empty() {
+                        for tr in &tool_result {
+                            self.add_tool_call_result_message(tr.clone());
+                        }
+                        continue;
                     }
-                    Box::pin(self.run_one_turn()).await;
+
+                    // TODO: user input
+                    break;
+                }
+                FinishReason::Stop => {
+                    // TODO: user input
+                    break;
                 }
             }
-            FinishReason::Stop => {}
         }
+
+        Ok(())
     }
 
-    fn run_tools(&self, tool_calls: &Vec<ToolCall>) -> Vec<ToolResult> {
+    fn run_tools(&self, tool_calls: &Vec<ToolCall>) -> anyhow::Result<Vec<ToolResult>> {
         let mut r: Vec<ToolResult> = Vec::new();
 
         for tc in tool_calls {
@@ -321,34 +329,34 @@ impl Engine {
                     ToolFunctionType::Bash => Box::new(BashFunction::new(
                         tc.id.clone(),
                         tc.function.arguments.clone(),
-                    )),
+                    )?),
                     ToolFunctionType::ReadFile => Box::new(ReadFileFunction::new(
                         self.work_dir.clone(),
                         tc.id.clone(),
                         tc.function.arguments.clone(),
-                    )),
+                    )?),
                     ToolFunctionType::WriteFile => Box::new(WriteFileFunction::new(
                         self.work_dir.clone(),
                         tc.id.clone(),
                         tc.function.arguments.clone(),
-                    )),
+                    )?),
                     ToolFunctionType::EditFile => Box::new(EditFileFunction::new(
                         self.work_dir.clone(),
                         tc.id.clone(),
                         tc.function.arguments.clone(),
-                    )),
+                    )?),
                     ToolFunctionType::Glob => Box::new(GlobFileFunction::new(
                         self.work_dir.clone(),
                         tc.id.clone(),
                         tc.function.arguments.clone(),
-                    )),
+                    )?),
                 },
             };
             let call_result = func.run();
             r.push(call_result);
         }
 
-        r
+        Ok(r)
     }
 
     fn dyr_run_tool(&self, tool_calls: &Vec<ToolCall>) {
@@ -364,15 +372,8 @@ impl Engine {
     }
 }
 
-fn read_user_input() -> Option<String> {
-    let mut rl = rustyline::DefaultEditor::new().expect("init input editor failed");
-    let readline = rl.readline("ragent> ");
-
-    match readline {
-        Ok(line) => {
-            let line = line.trim().to_string();
-            Some(line)
-        }
-        Err(_) => None,
-    }
+fn read_user_input() -> Result<String, anyhow::Error> {
+    let mut rl = rustyline::DefaultEditor::new().context("Failed to initialize input editor")?;
+    let readline = rl.readline("ragent> ")?;
+    Ok(readline.trim().to_string())
 }

@@ -3,9 +3,13 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::tool_call::{
-    helpers::read_file,
-    tool::{FunctionTool, ToolResult},
+use crate::{
+    error::RagentError,
+    tool_call::{
+        function_type::ToolFunctionType,
+        helpers::read_file,
+        tool::{FunctionTool, ToolResult},
+    },
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,15 +35,23 @@ impl Display for Arguments {
 }
 
 impl ReadFileFunction {
-    pub fn new(workdir: PathBuf, tool_use_id: String, arguments: String) -> Self {
-        let arguments: Arguments = serde_json::from_str(&arguments)
-            .expect("failed to parse arguments for ReadFileFunction function");
+    pub fn new(
+        workdir: PathBuf,
+        tool_use_id: String,
+        arguments: String,
+    ) -> Result<Self, RagentError> {
+        let arguments: Arguments =
+            serde_json::from_str(&arguments).map_err(|e| RagentError::InvalidToolArguments {
+                tool: ToolFunctionType::ReadFile.as_str().to_string(),
+                arguments: arguments.clone(),
+                err: e,
+            })?;
 
-        ReadFileFunction {
+        Ok(ReadFileFunction {
             workdir,
             tool_use_id,
             arguments,
-        }
+        })
     }
 }
 
@@ -51,7 +63,10 @@ impl FunctionTool for ReadFileFunction {
     /// Run read file
     fn run(&self) -> ToolResult {
         let path = &self.arguments.path;
-        let content = read_file(&self.workdir, path, self.arguments.limit);
+        let content = match read_file(&self.workdir, path, self.arguments.limit) {
+            Ok(s) => s,
+            Err(e) => format!("Error reading file {}: {}", path, e),
+        };
 
         ToolResult {
             r#type: "tool_result".to_string(),

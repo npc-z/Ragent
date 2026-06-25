@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::error::RagentError;
 use crate::llm::deepseek::enums::finish_reason::FinishReason;
 use crate::llm::response::{ApiResponse, ResponseMessage};
 use crate::tool_call::tool::ToolCall;
@@ -22,35 +23,34 @@ struct Choice {
 
 impl ApiResponse for DeepseekResponse {
     /// get the first llm response message
-    fn get_response_message(&self) -> ResponseMessage {
-        self.choices
-            .first()
-            .map(|c| c.message.clone())
-            .expect("Can not get response message")
+    fn get_response_message(&self) -> Result<ResponseMessage, RagentError> {
+        let c = self.choices.first().ok_or(RagentError::EmptyResponse)?;
+        Ok(c.message.clone())
     }
 
     fn get_answer(&self) -> String {
-        self.choices
-            .first()
-            .map(|c| c.message.content.clone())
+        self.get_response_message()
+            .map(|m| m.content)
             .unwrap_or_default()
     }
 
     fn get_reasoning_content(&self) -> String {
-        self.choices
-            .first()
-            .map(|c| c.message.reasoning_content.clone())
+        self.get_response_message()
+            .map(|m| m.reasoning_content)
             .unwrap_or_default()
     }
 
     fn get_finishi_reason(&self) -> FinishReason {
-        self.choices.first().unwrap().finish_reason
+        self.choices
+            .first()
+            .map(|c| c.finish_reason)
+            .unwrap_or(FinishReason::Stop) // default to Stop if no choices
     }
 
     fn get_tool_calls(&self) -> Vec<ToolCall> {
-        if let Some(tcs) = self.choices.first().unwrap().message.tool_calls.clone() {
-            return tcs;
-        };
-        Vec::new()
+        self.choices
+            .first()
+            .and_then(|c| c.message.tool_calls.clone())
+            .unwrap_or_default()
     }
 }

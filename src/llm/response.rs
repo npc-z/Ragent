@@ -2,7 +2,10 @@ use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{llm::deepseek::enums::finish_reason::FinishReason, tool_call::tool::ToolCall};
+use crate::{
+    error::RagentError, llm::deepseek::enums::finish_reason::FinishReason,
+    tool_call::tool::ToolCall,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResponseMessage {
@@ -14,7 +17,7 @@ pub struct ResponseMessage {
 
 pub trait ApiResponse: Clone + Debug {
     /// get the first llm response message
-    fn get_response_message(&self) -> ResponseMessage;
+    fn get_response_message(&self) -> Result<ResponseMessage, RagentError>;
 
     /// get the llm answer
     fn get_answer(&self) -> String;

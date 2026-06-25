@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::error::RagentError;
+use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::helpers::glob_file;
 use crate::tool_call::tool::{FunctionTool, ToolResult};
 
@@ -30,15 +32,23 @@ impl Display for Arguments {
 }
 
 impl GlobFileFunction {
-    pub fn new(workdir: PathBuf, tool_use_id: String, arguments: String) -> Self {
-        let arguments: Arguments = serde_json::from_str(&arguments)
-            .expect("failed to parse arguments for GlobFileFunction function");
+    pub fn new(
+        workdir: PathBuf,
+        tool_use_id: String,
+        arguments: String,
+    ) -> Result<Self, RagentError> {
+        let arguments: Arguments =
+            serde_json::from_str(&arguments).map_err(|e| RagentError::InvalidToolArguments {
+                tool: ToolFunctionType::Glob.as_str().to_string(),
+                arguments: arguments.clone(),
+                err: e,
+            })?;
 
-        GlobFileFunction {
+        Ok(GlobFileFunction {
             workdir,
             tool_use_id,
             arguments,
-        }
+        })
     }
 }
 
@@ -50,7 +60,10 @@ impl FunctionTool for GlobFileFunction {
     /// Run read file
     fn run(&self) -> ToolResult {
         let path = &self.arguments.path;
-        let content = glob_file(&self.workdir, path, self.arguments.pattern.clone());
+        let content = match glob_file(&self.workdir, path, self.arguments.pattern.clone()) {
+            Ok(s) => s,
+            Err(e) => format!("Error glob file {}: {}", path, e),
+        };
 
         ToolResult {
             r#type: "tool_result".to_string(),
