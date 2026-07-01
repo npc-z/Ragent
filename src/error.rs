@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RagentError {
-    #[error("Environment variable `{0}` not set")]
+    #[error("Environment variable `{0}` not set. Please set it in your .env file.")]
     EnvVarMissing(String),
 
     #[error("API request failed: {0}")]
@@ -26,9 +26,6 @@ pub enum RagentError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Shell command timed out after {0}s")]
-    CommandTimeout(u64),
-
     #[error("Path escapes workspace: {0}")]
     PathEscape(String),
 
@@ -40,15 +37,4 @@ pub enum RagentError {
 
     #[error("Text not found at path: {0}")]
     TextNotFound(String),
-
-    #[error("Tool parsing error: tool={tool}, arguments={arguments}, error={err}")]
-    InvalidToolArguments {
-        tool: String,
-        arguments: String,
-        #[source]
-        err: serde_json::Error,
-    },
-
-    #[error("Unsupported LLM: {0}")]
-    UnsupportedLlm(String),
 }

@@ -44,6 +44,7 @@ pub struct ResponseMessage {
 /// 解析后的完整响应
 #[derive(Clone, Debug)]
 pub struct ParsedResponse {
+    pub model: String,
     pub message: ResponseMessage,
     pub finish_reason: FinishReason,
     pub tool_calls: Vec<ToolCall>,
