@@ -76,18 +76,21 @@ impl Engine {
             .canonicalize()
             .context("Failed to canonicalize current directory")?;
 
-        let mut tool_registry = ToolRegistry::new();
-        tool_registry.register(Box::new(BashTool));
-        tool_registry.register(Box::new(ReadFileTool));
-        tool_registry.register(Box::new(WriteFileTool));
-        tool_registry.register(Box::new(EditFileTool));
-        tool_registry.register(Box::new(GlobFileTool));
+        let tool_registry = default_tool_registry();
 
-        let mut e = Engine {
+        Ok(Self::with_deps(client, tool_registry, model, cwd))
+    }
+
+    pub fn with_deps(
+        client: ApiClient,
+        tool_registry: ToolRegistry,
+        model: String,
+        work_dir: PathBuf,
+    ) -> Self {
+        let mut e = Self {
             client,
-            // model: model.clone(),
             body: Body {
-                model: model.clone(),
+                model,
                 messages: Vec::new(),
                 thinking: json!({"type": "enabled"}),
                 reasoning_effort: "high".to_string(),
@@ -96,16 +99,10 @@ impl Engine {
             },
             tool_registry,
             turn_count: 0,
-            work_dir: cwd,
+            work_dir,
         };
-        e.init_body();
-
-        Ok(e)
-    }
-
-    /// init the request body
-    fn init_body(&mut self) {
-        self.init_messages();
+        e.init_messages();
+        e
     }
 
     fn add_message(&mut self, msg: Message) {
@@ -271,4 +268,15 @@ fn read_user_input() -> Result<String, anyhow::Error> {
     let mut rl = rustyline::DefaultEditor::new().context("Failed to initialize input editor")?;
     let readline = rl.readline("ragent> ")?;
     Ok(readline.trim().to_string())
+}
+
+/// 默认工具注册（生产 + 测试共享）
+pub fn default_tool_registry() -> ToolRegistry {
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(BashTool));
+    registry.register(Box::new(ReadFileTool));
+    registry.register(Box::new(WriteFileTool));
+    registry.register(Box::new(EditFileTool));
+    registry.register(Box::new(GlobFileTool));
+    registry
 }
