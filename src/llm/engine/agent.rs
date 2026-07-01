@@ -7,20 +7,20 @@ use crate::llm::deepseek::enums::finish_reason::FinishReason;
 use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
 use crate::llm::response::{ApiResponse, ResponseMessage};
 use crate::llm::{client::ApiClient, llm_type::LlmType};
-use crate::tool_call::bash::BashFunction;
-use crate::tool_call::edit_file::EditFileFunction;
-use crate::tool_call::function_type::ToolFunctionType;
-use crate::tool_call::glob_file::GlobFileFunction;
-use crate::tool_call::read_file::ReadFileFunction;
-use crate::tool_call::tool::{FunctionTool, ToolCall, ToolResult};
-use crate::tool_call::write_file::WriteFileFunction;
+use crate::tool_call::bash::BashTool;
+use crate::tool_call::edit_file::EditFileTool;
+use crate::tool_call::glob_file::GlobFileTool;
+use crate::tool_call::read_file::ReadFileTool;
+use crate::tool_call::tool::{ToolCall, ToolRegistry, ToolResult};
+use crate::tool_call::write_file::WriteFileTool;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
 pub struct Engine {
     client: ApiClient,
     // model: String,
     body: Body,
+    /// tool registry
+    tool_registry: ToolRegistry,
 
     /// 对话轮次
     turn_count: u16,
@@ -76,6 +76,13 @@ impl Engine {
             .canonicalize()
             .context("Failed to canonicalize current directory")?;
 
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(BashTool));
+        tool_registry.register(Box::new(ReadFileTool));
+        tool_registry.register(Box::new(WriteFileTool));
+        tool_registry.register(Box::new(EditFileTool));
+        tool_registry.register(Box::new(GlobFileTool));
+
         let mut e = Engine {
             client,
             // model: model.clone(),
@@ -85,8 +92,9 @@ impl Engine {
                 thinking: json!({"type": "enabled"}),
                 reasoning_effort: "high".to_string(),
                 stream: false,
-                tools: Vec::new(),
+                tools: tool_registry.schemas(),
             },
+            tool_registry,
             turn_count: 0,
             work_dir: cwd,
         };
@@ -98,7 +106,6 @@ impl Engine {
     /// init the request body
     fn init_body(&mut self) {
         self.init_messages();
-        self.init_tools();
     }
 
     fn add_message(&mut self, msg: Message) {
@@ -176,94 +183,6 @@ impl Engine {
         self.add_system_message(promotion.to_string());
     }
 
-    /// init tools, currently only bash
-    fn init_tools(&mut self) {
-        // bash
-        self.body.tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": ToolFunctionType::Bash.as_str(),
-                "description": "Run a shell command.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string",},
-                    },
-                    "required": ["command"],
-                },
-            },
-        }));
-
-        // read file
-        self.body.tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": ToolFunctionType::ReadFile.as_str(),
-                "description": "Read file contents.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string",},
-                        "limit": {"type": "integer",},
-                    },
-                    "required": ["path"],
-                },
-            },
-        }));
-
-        // write file
-        self.body.tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": ToolFunctionType::WriteFile.as_str(),
-                "description": "Write content to a file.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string",},
-                        "content": {"type": "string",},
-                    },
-                    "required": ["path", "content"],
-                },
-            },
-        }));
-
-        // edit file
-        self.body.tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": ToolFunctionType::EditFile.as_str(),
-                "description": "Replace exact text in a file once",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string",},
-                        "old_text": {"type": "string",},
-                        "new_text": {"type": "string",},
-                    },
-                    "required": ["path", "old_text", "new_text"],
-                },
-            },
-        }));
-
-        // glob
-        self.body.tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": ToolFunctionType::Glob.as_str(),
-                "description": "Find files matching a glob pattern",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string",},
-                        "pattern": {"type": "string",},
-                    },
-                    "required": ["path","pattern"],
-                },
-            },
-        }));
-    }
-
     /// Send message to the LLM and get the response
     async fn send_message(&self) -> anyhow::Result<impl ApiResponse + use<'_>> {
         Ok(self.client.send(&self.body).await?)
@@ -321,42 +240,23 @@ impl Engine {
     }
 
     fn run_tools(&self, tool_calls: &Vec<ToolCall>) -> anyhow::Result<Vec<ToolResult>> {
-        let mut r: Vec<ToolResult> = Vec::new();
+        let mut results: Vec<ToolResult> = Vec::new();
 
         for tc in tool_calls {
-            let func: Box<dyn FunctionTool> = match tc.r#type {
-                ToolCallType::Function => match tc.function.name {
-                    ToolFunctionType::Bash => Box::new(BashFunction::new(
-                        tc.id.clone(),
-                        tc.function.arguments.clone(),
-                    )?),
-                    ToolFunctionType::ReadFile => Box::new(ReadFileFunction::new(
-                        self.work_dir.clone(),
-                        tc.id.clone(),
-                        tc.function.arguments.clone(),
-                    )?),
-                    ToolFunctionType::WriteFile => Box::new(WriteFileFunction::new(
-                        self.work_dir.clone(),
-                        tc.id.clone(),
-                        tc.function.arguments.clone(),
-                    )?),
-                    ToolFunctionType::EditFile => Box::new(EditFileFunction::new(
-                        self.work_dir.clone(),
-                        tc.id.clone(),
-                        tc.function.arguments.clone(),
-                    )?),
-                    ToolFunctionType::Glob => Box::new(GlobFileFunction::new(
-                        self.work_dir.clone(),
-                        tc.id.clone(),
-                        tc.function.arguments.clone(),
-                    )?),
-                },
-            };
-            let call_result = func.run();
-            r.push(call_result);
+            match tc.r#type {
+                ToolCallType::Function => {
+                    let result = self.tool_registry.execute(
+                        tc.function.name,
+                        &tc.function.arguments,
+                        &tc.id,
+                        &self.work_dir,
+                    );
+                    results.push(result);
+                }
+            }
         }
 
-        Ok(r)
+        Ok(results)
     }
 
     fn dyr_run_tool(&self, tool_calls: &Vec<ToolCall>) {

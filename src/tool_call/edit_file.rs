@@ -1,84 +1,58 @@
-use std::fmt::Display;
-use std::path::PathBuf;
-
 use serde::Deserialize;
+use serde_json::json;
 
-use crate::error::RagentError;
 use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::helpers::edit_file;
 use crate::tool_call::tool::{FunctionTool, ToolResult};
 
 /// Replace exact text in a file once
-#[derive(Debug, Clone, Deserialize)]
-pub struct EditFileFunction {
-    /// work dir
-    workdir: PathBuf,
-    /// the tool use id
-    pub tool_use_id: String,
-    /// function call arguments
-    arguments: Arguments,
-}
+#[derive(Debug)]
+pub struct EditFileTool;
 
-#[derive(Debug, Clone, Deserialize)]
-struct Arguments {
-    path: String,
-    old_text: String,
-    new_text: String,
-}
-
-impl Display for Arguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "path={}, old={}, new={}",
-            self.path, self.old_text, self.new_text
-        )
+impl FunctionTool for EditFileTool {
+    fn tool_type(&self) -> ToolFunctionType {
+        ToolFunctionType::EditFile
     }
-}
 
-impl EditFileFunction {
-    pub fn new(
-        workdir: PathBuf,
-        tool_use_id: String,
-        arguments: String,
-    ) -> Result<Self, RagentError> {
-        let arguments: Arguments =
-            serde_json::from_str(&arguments).map_err(|e| RagentError::InvalidToolArguments {
-                tool: ToolFunctionType::EditFile.as_str().to_string(),
-                arguments: arguments.clone(),
-                err: e,
-            })?;
-
-        Ok(EditFileFunction {
-            workdir,
-            tool_use_id,
-            arguments,
+    fn tool_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::EditFile.as_str(),
+                "description": "Replace exact text in a file once",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string",},
+                        "old_text": {"type": "string",},
+                        "new_text": {"type": "string",},
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                },
+            },
         })
     }
-}
 
-impl FunctionTool for EditFileFunction {
-    fn show(&self) {
-        println!("EditFileFunction: arguments={}", self.arguments)
-    }
+    fn execute(&self, arguments: &str, tool_use_id: &str, workdir: &std::path::Path) -> ToolResult {
+        #[derive(Deserialize)]
+        struct Args {
+            path: String,
+            old_text: String,
+            new_text: String,
+        }
 
-    /// Run read file
-    fn run(&self) -> ToolResult {
-        let path = &self.arguments.path;
-        let content = match edit_file(
-            &self.workdir,
-            path,
-            self.arguments.old_text.clone(),
-            self.arguments.new_text.clone(),
-        ) {
-            Ok(_) => format!("Successfully replaced text in file: {}", path),
-            Err(e) => format!("Error editing file {}: {}", path, e),
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return ToolResult::new(tool_use_id, format!("Error parsing arguments: {}", e));
+            }
         };
 
-        ToolResult {
-            r#type: "tool_result".to_string(),
-            tool_use_id: self.tool_use_id.to_string(),
-            content,
-        }
+        let output = match edit_file(workdir, &args.path, args.old_text, args.new_text) {
+            Ok(s) => s,
+            Err(e) => format!("Error editing file {}: {}", args.path, e),
+        };
+
+        ToolResult::new(tool_use_id, output)
     }
 }

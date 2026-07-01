@@ -1,95 +1,76 @@
-use std::fmt::Display;
 use std::process::{Command, Output};
 
 use std::{path::Path, process::Stdio};
 
 use serde::Deserialize;
+use serde_json::json;
 
-use crate::error::RagentError;
 use crate::tool_call::function_type::ToolFunctionType;
 use crate::tool_call::tool::{FunctionTool, ToolResult};
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct BashFunction {
-    /// the tool use id
-    pub tool_use_id: String,
-    /// function call arguments
-    arguments: Arguments,
-}
+#[derive(Debug)]
+pub struct BashTool;
 
-#[derive(Debug, Clone, Deserialize)]
-struct Arguments {
-    command: String,
-}
-
-impl Display for Arguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "command={}", self.command)
+impl FunctionTool for BashTool {
+    fn tool_type(&self) -> ToolFunctionType {
+        ToolFunctionType::Bash
     }
-}
 
-impl BashFunction {
-    pub fn new(tool_use_id: String, arguments: String) -> Result<Self, RagentError> {
-        let arguments: Arguments =
-            serde_json::from_str(&arguments).map_err(|e| RagentError::InvalidToolArguments {
-                tool: ToolFunctionType::Bash.as_str().to_string(),
-                arguments: arguments.clone(),
-                err: e,
-            })?;
-
-        Ok(BashFunction {
-            tool_use_id,
-            arguments,
+    fn tool_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": ToolFunctionType::Bash.as_str(),
+                "description": "Run a shell command.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string",},
+                    },
+                    "required": ["command"],
+                },
+            },
         })
     }
-}
 
-impl FunctionTool for BashFunction {
-    fn show(&self) {
-        println!("BashCall: arguments={}", self.arguments)
-    }
-
-    /// Run bash command
-    fn run(&self) -> ToolResult {
-        // let dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"];
-        let command = &self.arguments.command;
-
-        if let Some(blocked) = check_dangerous(command) {
-            return ToolResult {
-                r#type: "tool_result".to_string(),
-                tool_use_id: self.tool_use_id.to_string(),
-                content: blocked,
-            };
+    fn execute(&self, arguments: &str, tool_use_id: &str, _workdir: &Path) -> ToolResult {
+        #[derive(Deserialize)]
+        struct Args {
+            command: String,
         }
 
-        // get current dir
+        let args: Args = match serde_json::from_str(arguments) {
+            Ok(a) => a,
+            Err(e) => {
+                return ToolResult::new(tool_use_id, format!("Error parsing arguments: {}", e));
+            }
+        };
+
+        if let Some(blocked) = check_dangerous(&args.command) {
+            return ToolResult::new(tool_use_id, blocked);
+        }
+
         let cwd = match std::env::current_dir() {
             Ok(d) => d,
             Err(e) => {
-                return ToolResult {
-                    r#type: "tool_result".to_string(),
-                    tool_use_id: self.tool_use_id.to_string(),
-                    content: format!("Error: failed to get current dir: {}", e),
-                };
+                return ToolResult::new(
+                    tool_use_id,
+                    format!("Error failed to get current directory: {}", e),
+                );
             }
         };
 
-        let output = match run_command(command, &cwd) {
+        let output = match run_command(&args.command, &cwd) {
             Ok(o) => o,
             Err(e) => {
-                return ToolResult {
-                    r#type: "tool_result".to_string(),
-                    tool_use_id: self.tool_use_id.to_string(),
-                    content: format!("Error: failed to execute command: {}", e),
-                };
+                return ToolResult::new(
+                    tool_use_id,
+                    format!("Error: failed to execute command: {}", e),
+                );
             }
         };
 
-        ToolResult {
-            r#type: "tool_result".to_string(),
-            tool_use_id: self.tool_use_id.to_string(),
-            content: format_output(&output),
-        }
+        ToolResult::new(tool_use_id, format_output(&output))
     }
 }
 
@@ -137,7 +118,7 @@ fn run_command(command: &str, cwd: &Path) -> std::io::Result<Output> {
 }
 
 /// 安全检查：返回 Some(error_message) 表示命令应被拦截
-pub fn check_dangerous(command: &str) -> Option<String> {
+fn check_dangerous(command: &str) -> Option<String> {
     // 全量匹配：完全等于这些词就拦截
     let exact_block: &[&str] = &["sudo", "shutdown", "reboot", "halt", "poweroff"];
 
