@@ -1,12 +1,38 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::RagentError, llm::deepseek::enums::finish_reason::FinishReason,
-    tool_call::tool::ToolCall,
-};
+use crate::{error::RagentError, tool_call::tool::ToolCall};
 
+/// LLM 协议层的 finish reason（非 provider 特定）
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    ToolCalls,
+    Stop,
+}
+
+impl FinishReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FinishReason::ToolCalls => "tool_calls",
+            FinishReason::Stop => "stop",
+        }
+    }
+}
+
+impl FromStr for FinishReason {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "tool_calls" => Ok(FinishReason::ToolCalls),
+            "stop" => Ok(FinishReason::Stop),
+            _ => Err(format!("Unknown finish_reason {}", s)),
+        }
+    }
+}
+
+/// Provider 无关的 LLM 响应
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResponseMessage {
     pub role: String,
@@ -15,19 +41,15 @@ pub struct ResponseMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-pub trait ApiResponse: Clone + Debug {
-    /// get the first llm response message
-    fn get_response_message(&self) -> Result<ResponseMessage, RagentError>;
+/// 解析后的完整响应
+#[derive(Clone, Debug)]
+pub struct ParsedResponse {
+    pub message: ResponseMessage,
+    pub finish_reason: FinishReason,
+    pub tool_calls: Vec<ToolCall>,
+}
 
-    /// get the llm answer
-    fn get_answer(&self) -> String;
-
-    /// get the llm reasoning content
-    fn get_reasoning_content(&self) -> String;
-
-    /// get the finish reason
-    fn get_finishi_reason(&self) -> FinishReason;
-
-    /// get all tool calls query
-    fn get_tool_calls(&self) -> Vec<ToolCall>;
+/// Provider 需要实现解析
+pub trait ResponseParser: Send + Sync + Debug {
+    fn parse(&self, text: &str, llm_name: &str) -> Result<ParsedResponse, RagentError>;
 }

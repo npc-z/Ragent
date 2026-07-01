@@ -1,16 +1,13 @@
-use std::str::FromStr;
 use std::time::Duration;
 
 use crate::error::RagentError;
+use crate::llm::response::{ParsedResponse, ResponseParser};
 use reqwest::Client;
 use serde::Serialize;
 
-use crate::llm::deepseek::response::DeepseekResponse;
-use crate::llm::{llm_type::LlmType, response::ApiResponse};
-
 #[derive(Debug)]
 pub struct ApiClient {
-    llm: LlmType,
+    parser: Box<dyn ResponseParser>,
     base_url: String,
     api_key: String,
     timeout_secs: u64,
@@ -21,7 +18,7 @@ impl ApiClient {
         ApiClientBuilder::default()
     }
 
-    pub async fn send(&self, body: &impl Serialize) -> Result<impl ApiResponse, RagentError> {
+    pub async fn send(&self, body: &impl Serialize) -> Result<ParsedResponse, RagentError> {
         let client = Client::new();
 
         let raw_resp = client
@@ -53,22 +50,14 @@ impl ApiClient {
             });
         }
 
-        match self.llm {
-            LlmType::DeepSeek => {
-                serde_json::from_str::<DeepseekResponse>(text.as_str()).map_err(|e| {
-                    RagentError::ApiParse {
-                        llm: LlmType::DeepSeek.to_string(),
-                        e: e.to_string(),
-                    }
-                })
-            }
-        }
+        // FIXME: hardcode `llm`
+        self.parser.parse(&text, "llm")
     }
 }
 
 #[derive(Default)]
 pub struct ApiClientBuilder {
-    llm: Option<LlmType>,
+    parser: Option<Box<dyn ResponseParser>>,
     base_url: Option<String>,
     api_key: Option<String>,
     headers: Vec<(String, String)>,
@@ -76,12 +65,10 @@ pub struct ApiClientBuilder {
 }
 
 impl ApiClientBuilder {
-    // set llm type
-    pub fn llm_type(mut self, llm_type: &str) -> Result<Self, RagentError> {
-        let llm = LlmType::from_str(llm_type)
-            .map_err(|_| RagentError::UnsupportedLlm(llm_type.to_string()))?;
-        self.llm = Some(llm);
-        Ok(self)
+    /// set parser
+    pub fn parser(mut self, parser: Box<dyn ResponseParser>) -> Self {
+        self.parser = Some(parser);
+        self
     }
 
     // set base_url
@@ -111,9 +98,9 @@ impl ApiClientBuilder {
     // build ApiClient
     pub fn build(self) -> Result<ApiClient, RagentError> {
         Ok(ApiClient {
-            llm: self
-                .llm
-                .ok_or(RagentError::ClientBuild("llm is required".to_string()))?,
+            parser: self
+                .parser
+                .ok_or(RagentError::ClientBuild("parser is required".to_string()))?,
 
             base_url: self
                 .base_url

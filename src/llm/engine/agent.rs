@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use anyhow::Context;
 use serde_json::{Value, json};
 
-use crate::llm::deepseek::enums::finish_reason::FinishReason;
+use crate::llm::client::ApiClient;
 use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
-use crate::llm::response::{ApiResponse, ResponseMessage};
-use crate::llm::{client::ApiClient, llm_type::LlmType};
+use crate::llm::deepseek::parser::DeepseekParser;
+use crate::llm::response::{FinishReason, ParsedResponse, ResponseMessage};
 use crate::tool_call::bash::BashTool;
 use crate::tool_call::edit_file::EditFileTool;
 use crate::tool_call::glob_file::GlobFileTool;
@@ -64,7 +64,7 @@ impl Engine {
     /// New engine
     pub fn new(api_url: String, api_key: String, model: String) -> anyhow::Result<Self> {
         let client = ApiClient::builder()
-            .llm_type(LlmType::DeepSeek.as_str())?
+            .parser(Box::new(DeepseekParser))
             .set_base_url(api_url)
             .api_key(api_key)
             .timeout(60)
@@ -184,7 +184,7 @@ impl Engine {
     }
 
     /// Send message to the LLM and get the response
-    async fn send_message(&self) -> anyhow::Result<impl ApiResponse + use<'_>> {
+    async fn send_message(&self) -> anyhow::Result<ParsedResponse> {
         Ok(self.client.send(&self.body).await?)
     }
 
@@ -201,15 +201,10 @@ impl Engine {
 
         // 进行一个轮次
         loop {
-            let finish_reason;
-            let answer;
-            let tcqs;
-            {
-                let response = self.send_message().await?;
-                finish_reason = response.get_finishi_reason();
-                answer = response.get_response_message()?;
-                tcqs = response.get_tool_calls();
-            }
+            let response = self.send_message().await?;
+            let finish_reason = response.finish_reason;
+            let answer = response.message;
+            let tcqs = response.tool_calls;
 
             self.add_llm_response_message(answer);
             self.turn_count += 1;
