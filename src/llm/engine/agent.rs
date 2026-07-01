@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use serde_json::{Value, json};
 
 use crate::llm::client::ApiClient;
 use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
 use crate::llm::deepseek::parser::DeepseekParser;
+use crate::llm::engine::conversation::{Conversation, Message};
 use crate::llm::response::{FinishReason, ParsedResponse, ResponseMessage};
 use crate::tool_call::bash::BashTool;
 use crate::tool_call::edit_file::EditFileTool;
@@ -13,51 +13,17 @@ use crate::tool_call::glob_file::GlobFileTool;
 use crate::tool_call::read_file::ReadFileTool;
 use crate::tool_call::tool::{ToolCall, ToolRegistry, ToolResult};
 use crate::tool_call::write_file::WriteFileTool;
-use serde::{Deserialize, Serialize};
 
 pub struct Engine {
     client: ApiClient,
     // model: String,
-    body: Body,
+    conversation: Conversation,
     /// tool registry
     tool_registry: ToolRegistry,
 
     /// 对话轮次
     turn_count: u16,
     work_dir: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Body {
-    model: String,
-    messages: Vec<Message>,
-    thinking: Value,
-    reasoning_effort: String,
-    stream: bool,
-    tools: Vec<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "role")]
-enum Message {
-    #[serde(rename = "system")]
-    System { content: String },
-
-    #[serde(rename = "assistant")]
-    Assistant {
-        content: String,
-        reasoning_content: String,
-        tool_calls: Option<Vec<ToolCall>>,
-    },
-
-    #[serde(rename = "user")]
-    User { content: String },
-
-    #[serde(rename = "tool")]
-    Tool {
-        content: String,
-        tool_call_id: String,
-    },
 }
 
 impl Engine {
@@ -87,16 +53,10 @@ impl Engine {
         model: String,
         work_dir: PathBuf,
     ) -> Self {
+        let conversation = Conversation::new(model, tool_registry.schemas());
         let mut e = Self {
             client,
-            body: Body {
-                model,
-                messages: Vec::new(),
-                thinking: json!({"type": "enabled"}),
-                reasoning_effort: "high".to_string(),
-                stream: false,
-                tools: tool_registry.schemas(),
-            },
+            conversation,
             tool_registry,
             turn_count: 0,
             work_dir,
@@ -105,70 +65,39 @@ impl Engine {
         e
     }
 
-    fn add_message(&mut self, msg: Message) {
-        self.show_message(&msg);
-        self.body.messages.push(msg);
-    }
-
-    fn show_message(&self, message: &Message) {
-        let begin = ">".repeat(40);
-        let end = "<".repeat(40);
-
-        match message {
-            Message::System { content } => {
-                println!("{}\nsystem:\n{}\n{}\n\n", begin, content, end)
-            }
-
-            Message::Assistant {
-                content,
-                reasoning_content,
-                ..
-            } => println!(
-                "{}\nreasoning_content:\n{}\nassistant:\n{}\n{}\n\n",
-                begin, reasoning_content, content, end
-            ),
-
-            Message::User { content, .. } => {
-                println!("{}\nuser:\n{}\n{}\n\n", begin, content, end)
-            }
-
-            Message::Tool {
-                content: _content,
-                tool_call_id,
-            } => {
-                println!(
-                    "{}\ntool({}):\n{}\n{}\n\n",
-                    begin, tool_call_id, "muted now", end
-                )
-            }
-        }
-    }
-
     /// add user message to the body
     fn add_user_message(&mut self, content: String) {
-        self.add_message(Message::User { content });
+        let msg = Message::User { content };
+        print!("{}", &msg);
+        self.conversation.push_message(msg);
     }
 
     /// add system message to the body
     fn add_system_message(&mut self, content: String) {
-        self.add_message(Message::System { content });
+        let msg = Message::System { content };
+        print!("{}", &msg);
+        self.conversation.push_message(msg);
     }
 
     /// add tool call result message to the body
     fn add_tool_call_result_message(&mut self, tool_result: ToolResult) {
-        self.add_message(Message::Tool {
+        let msg = Message::Tool {
             content: tool_result.content,
             tool_call_id: tool_result.tool_use_id,
-        });
+        };
+        print!("{}", &msg);
+        self.conversation.push_message(msg);
     }
 
     /// add llm response message to the body
-    fn add_llm_response_message(&mut self, msg: ResponseMessage) {
-        self.add_message(Message::Assistant {
-            content: msg.content,
-            reasoning_content: msg.reasoning_content,
-            tool_calls: msg.tool_calls,
-        })
+    fn add_llm_response_message(&mut self, response: ResponseMessage) {
+        let msg = Message::Assistant {
+            content: response.content,
+            reasoning_content: response.reasoning_content,
+            tool_calls: response.tool_calls,
+        };
+        print!("{}", &msg);
+        self.conversation.push_message(msg);
     }
 
     /// init the system message
@@ -182,7 +111,7 @@ impl Engine {
 
     /// Send message to the LLM and get the response
     async fn send_message(&self) -> anyhow::Result<ParsedResponse> {
-        Ok(self.client.send(&self.body).await?)
+        Ok(self.client.send(&self.conversation).await?)
     }
 
     /// Read user input
