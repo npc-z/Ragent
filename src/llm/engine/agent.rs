@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use rustyline::DefaultEditor;
 
 use crate::llm::client::ApiClient;
 use crate::llm::deepseek::enums::tool_call_type::ToolCallType;
@@ -24,6 +25,8 @@ pub struct Engine {
     /// 对话轮次
     turn_count: u16,
     work_dir: PathBuf,
+    /// user input
+    editor: DefaultEditor,
 }
 
 impl Engine {
@@ -43,8 +46,10 @@ impl Engine {
             .context("Failed to canonicalize current directory")?;
 
         let tool_registry = default_tool_registry();
+        let editor =
+            rustyline::DefaultEditor::new().context("Failed to initialize input editor")?;
 
-        Ok(Self::with_deps(client, tool_registry, model, cwd))
+        Ok(Self::with_deps(client, tool_registry, model, cwd, editor))
     }
 
     pub fn with_deps(
@@ -52,6 +57,7 @@ impl Engine {
         tool_registry: ToolRegistry,
         model: String,
         work_dir: PathBuf,
+        editor: DefaultEditor,
     ) -> Self {
         let conversation = Conversation::new(model, tool_registry.schemas());
         let mut e = Self {
@@ -60,6 +66,7 @@ impl Engine {
             tool_registry,
             turn_count: 0,
             work_dir,
+            editor,
         };
         e.init_messages();
         e
@@ -114,16 +121,23 @@ impl Engine {
         Ok(self.client.send(&self.conversation).await?)
     }
 
-    /// Read user input
-    fn get_user_message(&mut self) -> anyhow::Result<()> {
-        let user_msg = read_user_input()?;
-        self.add_user_message(user_msg);
-        Ok(())
+    /// Return None on quit
+    fn prompt_user(&mut self) -> anyhow::Result<Option<String>> {
+        let user_msg = read_user_input(&mut self.editor)?;
+        match user_msg.as_str() {
+            "/q" | "/exit" | "/quit" => Ok(None),
+            _ => Ok(Some(user_msg)),
+        }
     }
 
     /// Run the message loop, read user input, send message and get the response
     pub async fn run_loop(&mut self) -> anyhow::Result<()> {
-        self.get_user_message()?;
+        // user input
+        if let Some(msg) = self.prompt_user()? {
+            self.add_user_message(msg);
+        } else {
+            return Ok(());
+        }
 
         // 进行一个轮次
         loop {
@@ -144,15 +158,24 @@ impl Engine {
                         for tr in &tool_result {
                             self.add_tool_call_result_message(tr.clone());
                         }
+                        // let the agent goes on with tool results
                         continue;
                     }
 
-                    // TODO: user input
-                    break;
+                    // user input
+                    if let Some(msg) = self.prompt_user()? {
+                        self.add_user_message(msg);
+                    } else {
+                        break;
+                    }
                 }
                 FinishReason::Stop => {
-                    // TODO: user input
-                    break;
+                    // user input
+                    if let Some(msg) = self.prompt_user()? {
+                        self.add_user_message(msg);
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -193,9 +216,8 @@ impl Engine {
     }
 }
 
-fn read_user_input() -> Result<String, anyhow::Error> {
-    let mut rl = rustyline::DefaultEditor::new().context("Failed to initialize input editor")?;
-    let readline = rl.readline("ragent> ")?;
+fn read_user_input(editor: &mut DefaultEditor) -> Result<String, anyhow::Error> {
+    let readline = editor.readline("ragent> ")?;
     Ok(readline.trim().to_string())
 }
 
